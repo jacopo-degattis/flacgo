@@ -7,7 +7,7 @@ A high-level library to work with FLAC files.
 ## Install 
 
 ```bash
-$ go get github.com/yourusername/go-flac
+$ go get github.com/jacopo-degattis/go-flac
 ```
 
 ## Features
