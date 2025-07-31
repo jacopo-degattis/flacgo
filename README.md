@@ -13,7 +13,7 @@ $ go get github.com/jacopo-degattis/go-flac
 ## Features
 
 - Read FLAC metadata blocks
-- Create VORBIS_COMMENT blocks
+- High-level function to add new metadata
 
 ## Example usage
 
