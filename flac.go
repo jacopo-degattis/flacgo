@@ -1,3 +1,5 @@
+// Package flacgo provides a high-level library to work easily with
+// FLAC files.
 package flacgo
 
 import (
@@ -19,22 +21,34 @@ var BlockMapping = map[uint8]string{
 	127: "INVALID",
 }
 
+// MetadataBlockHeader represents the header bytes of a MetadataBlock
+type MetadataBlockHeader struct {
+	BlockType   uint8
+	IsLastBlock bool
+	BlockLength uint32
+}
+
+// MetadataBlock stores all necessary informations about a MetadataBlock
 type MetadataBlock struct {
 	Index       int64
 	BlockType   string
 	IsLastBlock bool
+	BlockHeader MetadataBlockHeader
 	BlockData   []byte
 }
 
+// VorbisComment holds key and values to add a new VORBIS_COMMENT
 type VorbisComment struct {
 	Title string
 	Value string
 }
 
+// Flac is the main struct holding a pointer to the currently opened file
 type Flac struct {
 	file *os.File
 }
 
+// Open a file from a given path
 func Open(path string) (*Flac, error) {
 	f, err := os.Open(path)
 
@@ -42,86 +56,120 @@ func Open(path string) (*Flac, error) {
 		return nil, fmt.Errorf("Failed to initialize flacgo %w", err)
 	}
 
+	// Check if the opened file is a valid FLAC file.
+	magicHeader := make([]byte, 4)
+	f.Read(magicHeader)
+	if GetAsText(magicHeader) != "fLaC" {
+		return nil, fmt.Errorf("Invalid FLAC format file.")
+	}
+
 	return &Flac{
 		file: f,
 	}, nil
 }
 
-func (flac *Flac) GetAsText(array []byte) string {
-	var outputString string
-	for _, integer := range array {
-		outputString += string(integer)
-	}
-	return outputString
-}
-
-// Better handle possible errors and update everywhere this function is called to better handle the error scenario
-func (flac *Flac) ReadBytes(bytesNum int) []byte {
+// ReadBytes tries to read `bytesNum` amount of bytes from the currently open file
+func (flac *Flac) ReadBytes(bytesNum int) ([]byte, error) {
 	data := make([]byte, bytesNum)
-	flac.file.Read(data)
-	return data
+	_, err := io.ReadFull(flac.file, data)
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to read %d bytes from file: %w", bytesNum, err)
+	}
+
+	return data, nil
 }
 
-func (flac *Flac) ReadMetadataBlock(offset int64) MetadataBlock {
+// ReadMetadataBlock reads a metadata block from the given offset
+func (flac *Flac) ReadMetadataBlock(offset int64) (*MetadataBlock, error) {
 	flac.file.Seek(offset, io.SeekStart)
-	blockHeader := flac.ReadBytes(1)
+	blockHeader, err := flac.ReadBytes(1)
 
 	blockType := blockHeader[0] & 0x7F
 	isLastBlock := (blockHeader[0] & 0x80) >> 7
 
-	lengthBytes := flac.ReadBytes(3)
+	lengthBytes, err := flac.ReadBytes(3)
 
 	// Uint32 requires 4 bytes slice to convert to Uint32 so I add one before as 0x00
 	blockLength := binary.BigEndian.Uint32(append([]byte{0}, lengthBytes...))
 
-	blockContent := flac.ReadBytes(int(blockLength))
+	blockContent, err := flac.ReadBytes(int(blockLength))
 
-	return MetadataBlock{
+	if err != nil {
+		return nil, fmt.Errorf("unable to read metadata block with offset %d: %w", offset, err)
+	}
+
+	return &MetadataBlock{
 		Index:       offset,
 		BlockType:   BlockMapping[blockType],
 		IsLastBlock: isLastBlock == 1,
-		BlockData:   blockContent,
-	}
+		BlockHeader: MetadataBlockHeader{
+			BlockType:   blockType,
+			IsLastBlock: isLastBlock == 1,
+			BlockLength: blockLength,
+		},
+		BlockData: blockContent,
+	}, nil
 }
 
-func (flac *Flac) ReadAllMetadataBlocks() []MetadataBlock {
+// ReadAllMetadataBlocks tries to read all metadata blocks from a source FLAC file
+func (flac *Flac) ReadAllMetadataBlocks() ([]MetadataBlock, error) {
 	var offset int = 4
 	blocks := []MetadataBlock{}
 
-	for true {
-		data := flac.ReadMetadataBlock(int64(offset))
+	for {
+		data, err := flac.ReadMetadataBlock(int64(offset))
+		if err != nil {
+			return nil, fmt.Errorf("unable to read metadata block with offset %d: %w", offset, err)
+		}
+
 		offset += 4 + len(data.BlockData)
-		blocks = append(blocks, data)
+		blocks = append(blocks, *data)
 
 		if data.IsLastBlock {
 			break
 		}
 	}
 
-	return blocks
+	return blocks, nil
 }
 
-func (flac *Flac) toBytes(value uint32, bytesLength int, endian binary.ByteOrder) []byte {
-	tmpBuffer := make([]byte, 4)
-	endian.PutUint32(tmpBuffer, value)
-	return tmpBuffer[4-bytesLength:]
-}
-
-// Binary data should contain a vorbis payload as bytes
-// ex: b'\r\x00\x00\x00Lavf59.27.100\x07\x00\x00\x00!\x00\x00\x00title=London Calling (Remastered)\x10\x00\x00\x00artist=The Clash\x15\x00\x00\x00ALBUMARTIST=The Clash\x15\x00\x00\x00album=London Calling \x0f\x00\x00\x00date=1979-12-14\x15\x00\x00\x00genre=Punk / New Wave\x15\x00\x00\x00encoder=Lavf59.27.100'
-func (flac *Flac) ParseVorbisBlock(vorbisBlock []byte) []VorbisComment {
+// ParseVorbisBlock tries to parse bytes from a vorbis block into a human readable structure
+func (flac *Flac) ParseVorbisBlock(vorbisBlock []byte) ([]VorbisComment, error) {
 	var vorbisComments []VorbisComment
 
+	if len(vorbisBlock) < 8 {
+		return nil, fmt.Errorf("vorbis block is too short")
+	}
+
 	vendorLength := binary.LittleEndian.Uint32(vorbisBlock[0:4])
+
+	if len(vorbisBlock) < int(4+4+vendorLength) {
+		return nil, fmt.Errorf("vorbis block too short for vendor length")
+	}
+
 	numberOfComments := binary.LittleEndian.Uint32(vorbisBlock[4+vendorLength : 4+4+vendorLength])
 
 	iteration := 0
 	offset := 4 + 4 + vendorLength
 	for iteration < int(numberOfComments) {
+		if len(vorbisBlock) < int(offset)+4 {
+			return nil, fmt.Errorf("unexpected end of vorbis block while reading comment length")
+		}
+
 		commentLength := binary.LittleEndian.Uint32(vorbisBlock[offset : offset+4])
+
+		if len(vorbisBlock) < int(offset)+int(commentLength) {
+			return nil, fmt.Errorf("unexpected end of vorbis block while reading comment content")
+		}
+
 		commentContent := string(vorbisBlock[offset+4 : offset+4+commentLength])
 
 		values := strings.Split(commentContent, "=")
+
+		if len(values) != 2 {
+			return nil, fmt.Errorf("malformed comment (no '=' found): %q", commentContent)
+		}
 
 		vorbisComments = append(vorbisComments, VorbisComment{
 			Title: values[0],
@@ -132,23 +180,25 @@ func (flac *Flac) ParseVorbisBlock(vorbisBlock []byte) []VorbisComment {
 		iteration += 1
 	}
 
-	return vorbisComments
+	return vorbisComments, nil
 }
 
-/*
-Use when metadata is missing otherwise use already existing one?
-By specification there must be only one VORBIS_COMMENT at a time in a flac file
-Fields example: {"title": "London Calling", ...}
-*/
-func (flac *Flac) CreateVorbisBlock(fields map[string]string) error {
+// CreateVorbisBlock creates a new VORBIS_COMMENT metadata block inside the flac file
+func (flac *Flac) CreateVorbisBlock(fields map[string]string) ([]byte, error) {
+	fmt.Print("[!] No vorbis block creating it...")
+
 	blockType := 4 // 4 = VORBIS_COMMENT
 	var lastBlockIndex int64
-	allBlocks := flac.ReadAllMetadataBlocks()
+	allBlocks, err := flac.ReadAllMetadataBlocks()
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to read metadata blocks %w", err)
+	}
 
 	for _, block := range allBlocks {
 		if block.BlockType == "VORBIS_COMMENT" {
 			// Can't add a new VORBIS_COMMENT then
-			return fmt.Errorf("You can have only one VORBIS_COMMENT per .flac file and there's one alredy.\n")
+			return nil, fmt.Errorf("You can have only one VORBIS_COMMENT per .flac file and there's one alredy.\n")
 		}
 		if block.IsLastBlock {
 			lastBlockIndex = block.Index
@@ -156,25 +206,21 @@ func (flac *Flac) CreateVorbisBlock(fields map[string]string) error {
 	}
 
 	var body []byte
-
 	vendor := []byte("flacgo1.1")
-	vendorLength := flac.toBytes(uint32(len(vendor)), 4, binary.LittleEndian)
-	newCommentsLength := flac.toBytes(uint32(len(fields)), 4, binary.LittleEndian)
+	vendorLength := ToBytes(uint32(len(vendor)), 4, binary.LittleEndian)
+	newCommentsLength := ToBytes(uint32(len(fields)), 4, binary.LittleEndian)
 
-	body = append(body, vendorLength...)
-	body = append(body, vendor...)
-	body = append(body, newCommentsLength...)
+	body = AppendTo(body, [][]byte{vendorLength, vendor, newCommentsLength})
 
 	for key, value := range fields {
 		comment := []byte(fmt.Sprintf("%s=%s", key, value))
-		commentLength := flac.toBytes(uint32(len(comment)), 4, binary.LittleEndian)
+		commentLength := ToBytes(uint32(len(comment)), 4, binary.LittleEndian)
 
-		body = append(body, commentLength...)
-		body = append(body, comment...)
+		body = AppendTo(body, [][]byte{commentLength, comment})
 	}
 
 	isLast := 0
-	payloadLength := flac.toBytes(uint32(len(body)), 3, binary.BigEndian)
+	payloadLength := ToBytes(uint32(len(body)), 3, binary.BigEndian)
 	headerByte := (isLast << 7) | blockType
 
 	header := []byte{byte(headerByte)}
@@ -182,28 +228,108 @@ func (flac *Flac) CreateVorbisBlock(fields map[string]string) error {
 
 	fileInfo, err := flac.file.Stat()
 	if err != nil {
-		return fmt.Errorf("Failed to stat file: %w", err)
+		return nil, fmt.Errorf("unable to stat file: %w", err)
 	}
 	totalSize := fileInfo.Size()
 
 	// prevData represnts file bytes from start to last block index
 	flac.file.Seek(0, 0)
-	prevData := flac.ReadBytes(int(lastBlockIndex))
+	prevData, err := flac.ReadBytes(int(lastBlockIndex))
 
 	// postData represnts file bytes from last block index to file end
 	flac.file.Seek(lastBlockIndex, 0)
-	postData := flac.ReadBytes(int(totalSize - lastBlockIndex))
-
-	newBuffer := append(prevData, header...)
-	newBuffer = append(newBuffer, body...)
-	newBuffer = append(newBuffer, postData...)
-
-	// TODO: make output name arbitrary from the user
-	err = os.WriteFile("output.flac", newBuffer, 0644)
+	postData, err := flac.ReadBytes(int(totalSize - lastBlockIndex))
 
 	if err != nil {
-		return fmt.Errorf("Failed to write file: %w", err)
+		return nil, fmt.Errorf("unable to read bytes from opened file %w", err)
 	}
 
-	return nil
+	newBuffer := AppendTo(prevData, [][]byte{header, body, postData})
+
+	return newBuffer, nil
+}
+
+// AddMetadata simplify creating or appending new metadata inside the VORBIS_COMMENT metadata block
+func (flac *Flac) AddMetadata(title string, value string) ([]byte, error) {
+	allBlocks, err := flac.ReadAllMetadataBlocks()
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to read all metadata blocks from file %w", err)
+	}
+
+	var vorbisBlockIndex int64 = 0
+	// var vorbisHeader MetadataBlockHeader
+	var vorbisBlockData []byte = []byte{}
+	for _, block := range allBlocks {
+		if block.BlockType == "VORBIS_COMMENT" {
+			vorbisBlockIndex = block.Index
+			vorbisBlockData = block.BlockData
+			// vorbisHeader = block.BlockHeader
+			break
+		}
+	}
+
+	if vorbisBlockIndex == 0 {
+		// It means that no VORBIS_COMMENT block currently exists
+		vorbisBuffer, err := flac.CreateVorbisBlock(map[string]string{
+			title: value,
+		})
+
+		if err != nil {
+			return nil, fmt.Errorf("unable to create vorbis block %w", err)
+		}
+
+		return vorbisBuffer, nil
+	}
+
+	fmt.Print("[!] Vorbis block found udpating it...")
+	// Create a copy of the current VORBIS_COMMENT block
+	updatedBody := make([]byte, len(vorbisBlockData))
+	copy(updatedBody, vorbisBlockData)
+
+	// Else it means the block already exists and I just need to update
+	// First I need to update the comments counter
+	currentTotalComments, totalCommentsIndex := GetCommentsLengthIndex(vorbisBlockData)
+	updatedValue := ToBytes(currentTotalComments+1, 4, binary.LittleEndian)
+	copy(updatedBody[totalCommentsIndex:totalCommentsIndex+4], updatedValue)
+
+	// Then create and encode new metadata infos
+	newComment := []byte(fmt.Sprintf("%s=%s", title, value))
+	newCommentLength := ToBytes(uint32(len(newComment)), 4, binary.LittleEndian)
+
+	updatedBody = AppendTo(updatedBody, [][]byte{newCommentLength, newComment})
+
+	fileInfo, err := flac.file.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("Failed to stat file: %w", err)
+	}
+	totalSize := fileInfo.Size()
+
+	// prevData represnts file bytes from start to last block index
+	flac.file.Seek(0, 0)
+	prevData, err := flac.ReadBytes(int(vorbisBlockIndex))
+
+	// postData represnts file bytes from last block index to file end
+	// I need to calculate the size of the previous vorbisBlockData in order to read the file from that point on...
+	originalBlockSize := int64(4 + len(vorbisBlockData))
+	flac.file.Seek(vorbisBlockIndex+originalBlockSize, 0)
+	postData, err := flac.ReadBytes(int(totalSize - (vorbisBlockIndex + originalBlockSize)))
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to build new buffer after tagging %w", err)
+	}
+
+	// Rebuild the header
+	blockSize := len(updatedBody) // The payload size in bytes
+	payloadLength := []byte{
+		byte((blockSize >> 16) & 0xFF),
+		byte((blockSize >> 8) & 0xFF),
+		byte(blockSize & 0xFF),
+	}
+	header := []byte{0x04}
+	header = append(header, payloadLength...)
+
+	newBuffer := AppendTo(prevData, [][]byte{header, updatedBody, postData})
+
+	return newBuffer, nil
 }
