@@ -1,7 +1,7 @@
 package main
 
 import (
-	"os"
+	"fmt"
 
 	flacgo "github.com/jacopo-degattis/flacgo"
 )
@@ -13,11 +13,18 @@ func main() {
 		panic(err)
 	}
 
-	newFileBuff, err := reader.AddMetadata("artist", "TEST_ARTIST")
-
-	err = os.WriteFile("output_metadata.flac", newFileBuff, 0644)
+	err = reader.RemoveMetadata("album", false)
+	err = reader.RemoveMetadata("artist", false)
 
 	if err != nil {
 		panic(err)
 	}
+
+	err = reader.Save("with_metadata.flac")
+
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("[+] DONE")
 }
