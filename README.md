@@ -7,7 +7,7 @@ A high-level library to work with FLAC files.
 ## Install 
 
 ```bash
-$ go get github.com/jacopo-degattis/go-flac
+$ go get github.com/jacopo-degattis/flacgo
 ```
 
 ## Features
@@ -17,7 +17,7 @@ $ go get github.com/jacopo-degattis/go-flac
 
 ## Example usage
 
-See [`examples/basic.go`](examples/basic.go) for a complete set of examples showing how to read, add, update and remove metadatas.
+See [`examples`](examples/) folder for a complete set of examples showing how to read, add, update and remove metadatas.
 
 You can run them with:
 
