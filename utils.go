@@ -3,6 +3,10 @@ package flacgo
 import (
 	"encoding/binary"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
+	"os"
 	"strings"
 )
 
@@ -79,4 +83,18 @@ func FilterDuplicatedComments(previousComments []VorbisComment, newComments []Vo
 	}
 
 	return merged
+}
+
+// For now support only for JPEG and PNG images
+func ParseImage(filePath string) (image.Image, string, error) {
+	f, err := os.Open(filePath)
+
+	if err != nil {
+		return nil, "", fmt.Errorf("unable to parse image: %w", err)
+	}
+	defer f.Close()
+
+	image, imageType, err := image.Decode(f)
+
+	return image, imageType, err
 }
