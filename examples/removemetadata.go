@@ -7,15 +7,15 @@ import (
 )
 
 func main() {
-	reader, err := flacgo.Open("test.flac")
+	reader, err := flacgo.Open("examples/sample.flac")
 
 	if err != nil {
 		panic(err)
 	}
 
-	reader.RemoveMetadata("album")
-	reader.RemoveMetadata("artist")
-	
+	err = reader.RemoveMetadata("album", false)
+	err = reader.RemoveMetadata("artist", false)
+
 	if err != nil {
 		panic(err)
 	}

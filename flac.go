@@ -250,7 +250,14 @@ func (flac *Flac) CreateVorbisBlock() ([]byte, error) {
 	return header, nil
 }
 
+// AddMetadata inserts a new metadata inside the FLAC file only if the metadata doesn't already exists.
 func (flac *Flac) AddMetadata(title string, value string) error {
+	for _, cmt := range flac.parsedComments {
+		if strings.ToLower(cmt.Title) == strings.ToLower(title) {
+			return fmt.Errorf("unable to add metadata with name '%s' because it already exists.", title)
+		}
+	}
+
 	flac.pendingComments = append(flac.pendingComments, VorbisComment{
 		Title: title,
 		Value: value,
@@ -259,7 +266,49 @@ func (flac *Flac) AddMetadata(title string, value string) error {
 	return nil
 }
 
-func (flac *Flac) RemoveMetadata(title string) {
+// UpdateMetadata tries to update the value of a given metadata that already exists, if it doesn't exists then the function returns error.
+func (flac *Flac) UpdateMetadata(title string, newValue string) error {
+	for _, cmt := range flac.parsedComments {
+		if strings.ToLower(cmt.Title) == strings.ToLower(title) {
+			flac.pendingComments = append(flac.pendingComments, VorbisComment{
+				Title: title,
+				Value: newValue,
+			})
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("unable to update metadata, metadata with name '%s' not found", title)
+}
+
+// SetMetadata inserts a new metadata inside the FLAC file, if it doesn't exists it creates it otherwise it updates the value.
+func (flac *Flac) SetMetadata(title string, value string) error {
+	flac.pendingComments = append(flac.pendingComments, VorbisComment{
+		Title: title,
+		Value: value,
+	})
+
+	return nil
+}
+
+// RemoveMetadata from the currently opened flac file.
+// If IgnoreIfMissing is set to true then no error will be returned if the
+// metadata key is missing.
+func (flac *Flac) RemoveMetadata(title string, ignoreIfMissing bool) error {
+	exists := false
+	if !ignoreIfMissing {
+		for _, cmt := range flac.parsedComments {
+			if strings.ToLower(title) == strings.ToLower(cmt.Title) {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			return fmt.Errorf("unable to remove metadata with name '%s' because it doesn't exist in file.", title)
+		}
+	}
+
 	updatedComments := make([]VorbisComment, 0)
 
 	for _, cmt := range flac.pendingComments {
@@ -271,8 +320,11 @@ func (flac *Flac) RemoveMetadata(title string) {
 	fmt.Printf("Updated Comments: %s", updatedComments)
 	flac.pendingComments = updatedComments
 	flac.removedComments[strings.ToLower(title)] = true
+
+	return nil
 }
 
+// Save the file locally.
 func (flac *Flac) Save(path string) error {
 	outFile, err := os.Create(path)
 
