@@ -250,6 +250,17 @@ func (flac *Flac) CreateVorbisBlock() ([]byte, error) {
 	return header, nil
 }
 
+// ReadMetadata from the currently open FLAC file
+func (flac *Flac) ReadMetadata(title string) (*string, error) {
+	for _, cmt := range flac.parsedComments {
+		if strings.ToLower(cmt.Title) == title {
+			return &cmt.Value, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no metadata found with title '%s'", title)
+}
+
 // AddMetadata inserts a new metadata inside the FLAC file only if the metadata doesn't already exists.
 func (flac *Flac) AddMetadata(title string, value string) error {
 	for _, cmt := range flac.parsedComments {

@@ -17,13 +17,17 @@ $ go get github.com/jacopo-degattis/go-flac
 
 ## Example usage
 
-See [`examples/basic.go`](examples/basic.go) for a complete example showing how to read metadata and add a Vorbis comment block.
+See [`examples/basic.go`](examples/basic.go) for a complete set of examples showing how to read, add, update and remove metadatas.
 
-You can run it with:
+You can run them with:
 
 ```bash
-$ go run examples/basic.go
+$ go run examples/addmetadata.go
+$ go run examples/removemetadata.go
+$ go run examples/readmetadata.go
 ```
+
+More examples will be added.
 
 ## License
 
