@@ -25,6 +25,7 @@ You can run them with:
 $ go run examples/addmetadata.go
 $ go run examples/removemetadata.go
 $ go run examples/readmetadata.go
+$ go run examples/addcoverimage.go
 ```
 
 More examples will be added.
