@@ -3,7 +3,9 @@
 package flacgo
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -45,13 +47,14 @@ type VorbisComment struct {
 
 // Flac is the main struct holding a pointer to the currently opened file
 type Flac struct {
-	file            *os.File
-	fileSize        int64
-	vorbisIndex     int64
-	vorbisLength    int
-	pendingComments []VorbisComment
-	parsedComments  []VorbisComment
-	removedComments map[string]bool
+	file                *os.File
+	fileSize            int64
+	vorbisIndex         int64
+	vorbisLength        int
+	pendingComments     []VorbisComment
+	parsedComments      []VorbisComment
+	removedComments     map[string]bool
+	pendingCoverPicture []byte
 }
 
 // Open a file from a given path
@@ -218,6 +221,55 @@ func (flac *Flac) ParseVorbisBlock(vorbisBlock []byte) ([]VorbisComment, error) 
 	return vorbisComments, nil
 }
 
+func (flac *Flac) CreatePictureBlock(imagePath string) ([]byte, error) {
+	var buf bytes.Buffer
+	var fullBuf bytes.Buffer
+
+	header := byte(6)
+	header |= 0x80
+	fullBuf.WriteByte(header)
+
+	_, imageType, err := ParseImage(imagePath)
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to read image: %w", err)
+	}
+
+	descriptionString := ""
+	pictureMimeType := "image/" + imageType
+
+	// IMAGE DATA
+	imageData, err := os.ReadFile(imagePath)
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to read image data %w", err)
+	}
+
+	binary.Write(&buf, binary.BigEndian, uint32(3))
+	binary.Write(&buf, binary.BigEndian, uint32(len(pictureMimeType)))
+	buf.WriteString(pictureMimeType)
+	binary.Write(&buf, binary.BigEndian, uint32(len(descriptionString)))
+	buf.WriteString(descriptionString)
+	binary.Write(&buf, binary.BigEndian, uint32(600))
+	binary.Write(&buf, binary.BigEndian, uint32(600))
+	binary.Write(&buf, binary.BigEndian, uint32(24))
+	binary.Write(&buf, binary.BigEndian, uint32(0))
+	binary.Write(&buf, binary.BigEndian, uint32(len(imageData)))
+	buf.Write(imageData)
+
+	blockData := buf.Bytes()
+	length := uint32(len(blockData))
+
+	fullBuf.Write([]byte{
+		byte((length >> 16) & 0xFF),
+		byte((length >> 8) & 0xFF),
+		byte(length & 0xFF),
+	})
+	fullBuf.Write(blockData)
+
+	return fullBuf.Bytes(), nil
+}
+
 // CreateVorbisBlock creates a new VORBIS_COMMENT metadata block inside the flac file
 func (flac *Flac) CreateVorbisBlock() ([]byte, error) {
 	blockType := 4 // 4 = VORBIS_COMMENT
@@ -335,6 +387,18 @@ func (flac *Flac) RemoveMetadata(title string, ignoreIfMissing bool) error {
 	return nil
 }
 
+func (flac *Flac) AddCoverPicture(filePath string) error {
+	pictureBlockBytes, err := flac.CreatePictureBlock(filePath)
+
+	if err != nil {
+		return fmt.Errorf("unable to add cover picture: %w", err)
+	}
+
+	flac.pendingCoverPicture = pictureBlockBytes
+
+	return nil
+}
+
 // Save the file locally.
 func (flac *Flac) Save(path string) error {
 	outFile, err := os.Create(path)
@@ -362,6 +426,15 @@ func (flac *Flac) Save(path string) error {
 	}
 
 	outFile.Write(prevData)
+
+	// Maybe improve validation here or before
+	if len(flac.pendingCoverPicture) > 0 {
+
+		fmt.Println(hex.Dump(flac.pendingCoverPicture))
+
+		outFile.Write(flac.pendingCoverPicture)
+	}
+
 	outFile.Write(vorbisBody)
 	outFile.Write(postData)
 
