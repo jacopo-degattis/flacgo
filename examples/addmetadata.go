@@ -13,15 +13,15 @@ func main() {
 		panic(err)
 	}
 
-	err = reader.AddMetadata("Date", "2002-12-02")
-	err = reader.AddMetadata("Artist", "Test Artist")
-	err = reader.AddMetadata("Album", "Test Album")
+	err = reader.SetMetadata("Date", "2002-12-02")
+	err = reader.SetMetadata("Artist", "Test Artist")
+	err = reader.SetMetadata("Album", "Test Album")
 
 	if err != nil {
 		panic(err)
 	}
 
-	err = reader.Save("with_metadata.flac")
+	err = reader.Save("output.flac")
 
 	if err != nil {
 		panic(err)

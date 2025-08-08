@@ -12,8 +12,9 @@ $ go get github.com/jacopo-degattis/flacgo
 
 ## Features
 
-- Read FLAC metadata blocks
-- High-level function to add new metadata
+- Read metadata from FLAC file.
+- Add and remove metadata to/from the FLAC file.
+- Add or remove cover picture to/from a FLAC file.
 
 ## Example usage
 
@@ -22,10 +23,11 @@ See [`examples`](examples/) folder for a complete set of examples showing how to
 You can run them with:
 
 ```bash
-$ go run examples/addmetadata.go
-$ go run examples/removemetadata.go
-$ go run examples/readmetadata.go
 $ go run examples/addcoverimage.go
+$ go run examples/addmetadata.go
+$ go run examples/readmetadata.go
+$ go run examples/removecoverimage.go
+$ go run examples/removemetadata.go
 ```
 
 More examples will be added.

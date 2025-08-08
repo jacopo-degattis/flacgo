@@ -17,7 +17,7 @@ func main() {
 		panic(err)
 	}
 
-	err = reader.AddCoverPicture("examples/test.jpg")
+	err = reader.SetCoverPicture("examples/test.jpg")
 
 	if err != nil {
 		panic(err)
