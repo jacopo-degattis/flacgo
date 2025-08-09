@@ -46,6 +46,14 @@ type VorbisComment struct {
 	Value string
 }
 
+type FlacMetadatas struct {
+	Title  string
+	Artist string
+	Album  string
+	Date   string
+	Cover  []byte
+}
+
 // Flac is the main struct holding a pointer to the currently opened file
 type Flac struct {
 	file                *os.File
@@ -393,6 +401,32 @@ func (flac *Flac) SetMetadata(title string, value string) error {
 		Title: title,
 		Value: value,
 	})
+
+	return nil
+}
+
+func (flac *Flac) BulkAddMetadata(meta FlacMetadatas) error {
+	fields := map[string]string{
+		"title":  meta.Title,
+		"artist": meta.Artist,
+		"album":  meta.Album,
+		"date":   meta.Date,
+	}
+
+	for key, value := range fields {
+		if value == "" {
+			continue
+		}
+		if err := flac.SetMetadata(key, value); err != nil {
+			return fmt.Errorf("unable to set %s in BulkAddMetadata: %w", key, err)
+		}
+	}
+
+	if len(meta.Cover) > 0 {
+		if err := flac.SetCoverPictureFromBytes(meta.Cover); err != nil {
+			return fmt.Errorf("unable to set cover in BulkAddMetadata: %w", err)
+		}
+	}
 
 	return nil
 }

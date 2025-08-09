@@ -25,6 +25,8 @@ You can run them with:
 ```bash
 $ go run examples/addcoverimage.go
 $ go run examples/addmetadata.go
+$ go run examples/bulkaddmetadata.go
+$ go run examples/overwriteoriginalfile.go
 $ go run examples/readmetadata.go
 $ go run examples/removecoverimage.go
 $ go run examples/removemetadata.go
