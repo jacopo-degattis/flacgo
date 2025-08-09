@@ -23,7 +23,8 @@ func main() {
 		panic(err)
 	}
 
-	err = reader.Save("without_picture.flac")
+	outputPath := "without_picture.flac"
+	err = reader.Save(&outputPath)
 
 	if err != nil {
 		panic(err)

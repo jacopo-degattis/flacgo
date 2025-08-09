@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	flacgo "github.com/jacopo-degattis/flacgo"
 )
@@ -17,13 +18,18 @@ func main() {
 		panic(err)
 	}
 
-	err = reader.SetCoverPicture("examples/test.jpg")
+	// You can choose to add picture either from PATH or from BYTES
+	// err = reader.SetCoverPictureFromPath("examples/test.jpg")
+	data, err := os.ReadFile("examples/test.jpg")
 
 	if err != nil {
 		panic(err)
 	}
 
-	err = reader.Save("with_picture.flac")
+	err = reader.SetCoverPictureFromBytes(data)
+
+	outputPath := "with_picture.flac"
+	err = reader.Save(&outputPath)
 
 	if err != nil {
 		panic(err)

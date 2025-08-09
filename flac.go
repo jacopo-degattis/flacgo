@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 )
@@ -263,7 +264,24 @@ func (flac *Flac) parseVorbisBlock(vorbisBlock []byte) ([]VorbisComment, error) 
 	return vorbisComments, nil
 }
 
-func (flac *Flac) createPictureBlock(imagePath string) ([]byte, error) {
+func (flac *Flac) parseImageFromPath(imagePath string) (*string, []byte, error) {
+	_, imageType, err := ParseImage(imagePath)
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to read image: %w", err)
+	}
+
+	pictureMimeType := "image/" + imageType
+	imageData, err := os.ReadFile(imagePath)
+
+	if err != nil {
+		return nil, nil, fmt.Errorf("unable to read image data %w", err)
+	}
+
+	return &pictureMimeType, imageData, nil
+}
+
+func (flac *Flac) createPictureBlock(imageData []byte, pictureMimeType string) ([]byte, error) {
 	var buf bytes.Buffer
 	var fullBuf bytes.Buffer
 
@@ -271,27 +289,11 @@ func (flac *Flac) createPictureBlock(imagePath string) ([]byte, error) {
 	header |= 0x80
 	fullBuf.WriteByte(header)
 
-	_, imageType, err := ParseImage(imagePath)
-
-	if err != nil {
-		return nil, fmt.Errorf("unable to read image: %w", err)
-	}
-
-	descriptionString := ""
-	pictureMimeType := "image/" + imageType
-
-	// IMAGE DATA
-	imageData, err := os.ReadFile(imagePath)
-
-	if err != nil {
-		return nil, fmt.Errorf("unable to read image data %w", err)
-	}
-
 	binary.Write(&buf, binary.BigEndian, uint32(3))
 	binary.Write(&buf, binary.BigEndian, uint32(len(pictureMimeType)))
 	buf.WriteString(pictureMimeType)
-	binary.Write(&buf, binary.BigEndian, uint32(len(descriptionString)))
-	buf.WriteString(descriptionString)
+	binary.Write(&buf, binary.BigEndian, uint32(len("")))
+	buf.WriteString("")
 	binary.Write(&buf, binary.BigEndian, uint32(600))
 	binary.Write(&buf, binary.BigEndian, uint32(600))
 	binary.Write(&buf, binary.BigEndian, uint32(24))
@@ -428,8 +430,31 @@ func (flac *Flac) RemoveMetadata(title string, ignoreIfMissing bool) error {
 
 // SetCoverPicture sets a cover picture for the current FLAC file, if already exists then it overwrites it
 // Also add the ability to add image directly from buffer not necessarily from a given downloaded file
-func (flac *Flac) SetCoverPicture(filePath string) error {
-	pictureBlockBytes, err := flac.createPictureBlock(filePath)
+func (flac *Flac) SetCoverPictureFromPath(filePath string) error {
+	pictureMimeType, pictureBytes, err := flac.parseImageFromPath(filePath)
+
+	if err != nil {
+		return fmt.Errorf("unable to parse image with path: '%s': %w", filePath, err)
+	}
+
+	pictureBlockBytes, err := flac.createPictureBlock(pictureBytes, *pictureMimeType)
+
+	if err != nil {
+		return fmt.Errorf("unable to add cover picture: %w", err)
+	}
+
+	flac.pendingCoverPicture = pictureBlockBytes
+
+	return nil
+}
+
+func (flac *Flac) SetCoverPictureFromBytes(imgBytes []byte) error {
+	if len(imgBytes) < 512 {
+		return fmt.Errorf("unable to detect content type, image is too small or format is broken")
+	}
+
+	pictureMimeType := http.DetectContentType(imgBytes[:512])
+	pictureBlockBytes, err := flac.createPictureBlock(imgBytes, pictureMimeType)
 
 	if err != nil {
 		return fmt.Errorf("unable to add cover picture: %w", err)
@@ -476,10 +501,6 @@ func (flac *Flac) Save(outputPath *string) error {
 	magicHeader, err := flac.ReadBytes(4)
 	if err != nil {
 		return fmt.Errorf("failed to read FLAC header: %w", err)
-	}
-	// _, err = outFile.Write(magicHeader)
-	if err != nil {
-		return fmt.Errorf("failed to write FLAC header: %w", err)
 	}
 
 	// I should get the StreamInfoBlock independently outside the for loop

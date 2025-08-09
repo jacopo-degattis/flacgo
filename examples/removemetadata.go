@@ -19,7 +19,8 @@ func main() {
 		panic(err)
 	}
 
-	err = reader.Save("without_artist.flac")
+	outputPath := "without_artist.flac"
+	err = reader.Save(&outputPath)
 
 	if err != nil {
 		panic(err)
