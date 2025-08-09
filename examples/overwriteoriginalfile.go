@@ -7,22 +7,21 @@ import (
 )
 
 func main() {
-	reader, err := flacgo.Open("examples/sample.flac")
+	reader, err := flacgo.Open("output.flac")
 
 	if err != nil {
 		panic(err)
 	}
 
 	err = reader.SetMetadata("Date", "2002-12-02")
-	err = reader.SetMetadata("Artist", "Test Artist")
-	err = reader.SetMetadata("Album", "Test Album")
+	err = reader.SetMetadata("Artist", "Testone Artista")
+	err = reader.SetMetadata("Album", "Testone Albumista")
 
 	if err != nil {
 		panic(err)
 	}
 
-	filename := "output.flac"
-	err = reader.Save(&filename)
+	err = reader.Save(nil)
 
 	if err != nil {
 		panic(err)

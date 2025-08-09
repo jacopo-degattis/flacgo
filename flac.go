@@ -48,6 +48,7 @@ type VorbisComment struct {
 // Flac is the main struct holding a pointer to the currently opened file
 type Flac struct {
 	file                *os.File
+	fileName            string
 	fileSize            int64
 	vorbisIndex         *int64
 	vorbisLength        int
@@ -81,6 +82,7 @@ func Open(path string) (*Flac, error) {
 
 	flacRef := &Flac{
 		file:               f,
+		fileName:           f.Name(),
 		fileSize:           fileInfo.Size(),
 		removeCoverPicture: false,
 	}
@@ -450,17 +452,15 @@ func (flac *Flac) RemoveCoverPicture(ignoreIfMissing bool) error {
 	return nil
 }
 
-func (flac *Flac) Save(outputPath string) error {
+// Save modified FLAC buffer to a new file or to the current opened one, overwriting it
+func (flac *Flac) Save(outputPath *string) error {
 
 	var metadataBuffer []byte
 	var rawAudioBuffer []byte
 
 	// Create local output file
-	outFile, err := os.Create(outputPath)
-	if err != nil {
-		return fmt.Errorf("unable to save file with name %s: %w", outputPath, err)
-	}
-	defer outFile.Close()
+	var outFile *os.File
+	var err error
 
 	vorbisBlock, _ := flac.getBlock("VORBIS_COMMENT")
 
@@ -477,8 +477,7 @@ func (flac *Flac) Save(outputPath string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read FLAC header: %w", err)
 	}
-
-	_, err = outFile.Write(magicHeader)
+	// _, err = outFile.Write(magicHeader)
 	if err != nil {
 		return fmt.Errorf("failed to write FLAC header: %w", err)
 	}
@@ -562,7 +561,19 @@ func (flac *Flac) Save(outputPath string) error {
 		return fmt.Errorf("unable to get raw audio data with index: '%d'", lastBlock.Index)
 	}
 
-	fullBuffer := append(metadataBuffer, rawAudioBuffer...)
+	if outputPath != nil {
+		outFile, err = os.Create(*outputPath)
+	} else {
+		outFile, err = os.Create(flac.fileName)
+	}
+
+	if err != nil {
+		return fmt.Errorf("unable to save file with name %s: %w", *outputPath, err)
+	}
+	defer outFile.Close()
+
+	var fullBuffer []byte
+	fullBuffer = AppendTo(fullBuffer, [][]byte{magicHeader, metadataBuffer, rawAudioBuffer})
 	_, err = outFile.Write(fullBuffer)
 
 	if err != nil {
