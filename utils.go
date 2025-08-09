@@ -10,6 +10,7 @@ import (
 	"strings"
 )
 
+// GetAsText tries to parse an array of bytes as a string
 func GetAsText(array []byte) string {
 	var outputString string
 	for _, integer := range array {
@@ -18,20 +19,21 @@ func GetAsText(array []byte) string {
 	return outputString
 }
 
+// ToBytes create a byte buffer of Uint32 values in the given ByteOrder
 func ToBytes(value uint32, bytesLength int, endian binary.ByteOrder) []byte {
 	tmpBuffer := make([]byte, 4)
 	endian.PutUint32(tmpBuffer, value)
 	return tmpBuffer[4-bytesLength:]
 }
 
-// Get comments length from a given VORBIS_COMMENT block
-// Returns: current number of comments and the byte index where the number is stored
+// GetCommentsLengthIndex returns the current number of vorbis comments and the index the value is stored at
 func GetCommentsLengthIndex(vorbisBlock []byte) (uint32, uint32) {
 	vendorLength := binary.LittleEndian.Uint32(vorbisBlock[0:4])
 	numberOfComments := binary.LittleEndian.Uint32(vorbisBlock[4+vendorLength : 4+4+vendorLength])
 	return numberOfComments, 4 + vendorLength
 }
 
+// AppendTo is like append but supports multiple []byte consequently
 func AppendTo(slice []byte, elems [][]byte) []byte {
 	for _, el := range elems {
 		slice = append(slice, el...)
@@ -39,22 +41,28 @@ func AppendTo(slice []byte, elems [][]byte) []byte {
 	return slice
 }
 
-func GetVorbisBlock(flac *Flac) (*MetadataBlock, error) {
-	metadataBlocks, err := flac.ReadAllMetadataBlocks()
-
-	if err != nil {
-		return nil, fmt.Errorf("unable to read all metadata blocks %w", err)
-	}
-
-	for _, block := range metadataBlocks {
-		if block.BlockType == "VORBIS_COMMENT" {
-			return &block, nil
+// containsIgnoreCase check if a slice contains or not the given string
+func containsIgnoreCase(slice []string, str string) bool {
+	for _, item := range slice {
+		if strings.EqualFold(item, str) {
+			return true
 		}
 	}
-
-	return nil, fmt.Errorf("unable to find vorbis metadata block")
+	return false
 }
 
+// GetFilteredBlocks filters out all the blocks provided as second parameter to the function
+func GetFilteredBlocks(blocks []MetadataBlock, blockTypes []string) []MetadataBlock {
+	filteredBlocks := make([]MetadataBlock, 0)
+	for _, b := range blocks {
+		if !containsIgnoreCase(blockTypes, b.BlockType) {
+			filteredBlocks = append(filteredBlocks, b)
+		}
+	}
+	return filteredBlocks
+}
+
+// IncreaseCommentsCounter increase the current vorbis comments counter of the given amount value
 func IncreaseCommentsCounter(fileBinary []byte, vorbisBlock []byte, amount int) {
 	currentTotalComments, totalCommentsIndex := GetCommentsLengthIndex(vorbisBlock)
 	updatedValue := ToBytes(currentTotalComments+1, 4, binary.LittleEndian)

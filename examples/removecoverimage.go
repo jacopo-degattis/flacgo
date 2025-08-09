@@ -7,19 +7,23 @@ import (
 )
 
 func main() {
-	reader, err := flacgo.Open("examples/samplewithmetadata.flac")
+	reader, err := flacgo.Open("examples/sample.flac")
 
 	if err != nil {
 		panic(err)
 	}
 
-	err = reader.RemoveMetadata("artist", false)
+	if err != nil {
+		panic(err)
+	}
+
+	err = reader.RemoveCoverPicture(false)
 
 	if err != nil {
 		panic(err)
 	}
 
-	err = reader.Save("without_artist.flac")
+	err = reader.Save("without_picture.flac")
 
 	if err != nil {
 		panic(err)
