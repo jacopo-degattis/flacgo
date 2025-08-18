@@ -126,7 +126,7 @@ func Open(path string) (*Flac, error) {
 }
 
 // ReadBytes tries to read `bytesNum` amount of bytes from the currently open file
-func (flac *Flac) ReadBytes(bytesNum int) ([]byte, error) {
+func (flac *Flac) readBytes(bytesNum int) ([]byte, error) {
 	data := make([]byte, bytesNum)
 	_, err := io.ReadFull(flac.file, data)
 
@@ -150,7 +150,7 @@ func (flac *Flac) getBlock(blockType string) (*MetadataBlock, error) {
 	}
 
 	var fullBlock *MetadataBlock = nil
-	allBlocks, err := flac.ReadAllMetadataBlocks()
+	allBlocks, err := flac.readAllMetadataBlocks()
 
 	if err != nil {
 		return nil, fmt.Errorf("unable to read all metadata blocks: %w", err)
@@ -168,7 +168,7 @@ func (flac *Flac) getBlock(blockType string) (*MetadataBlock, error) {
 // ReadMetadataBlock reads a metadata block from the given offset
 func (flac *Flac) readMetadataBlock(offset int64) (*MetadataBlock, error) {
 	flac.file.Seek(offset, io.SeekStart)
-	headerBytes, err := flac.ReadBytes(4)
+	headerBytes, err := flac.readBytes(4)
 
 	if err != nil {
 		return nil, fmt.Errorf("unable to read header bytes from offset '%d': %w", offset, err)
@@ -181,7 +181,7 @@ func (flac *Flac) readMetadataBlock(offset int64) (*MetadataBlock, error) {
 	// Uint32 requires 4 bytes slice to convert to Uint32 so I add one before as 0x00
 	blockLength := binary.BigEndian.Uint32(append([]byte{0}, lengthBytes...))
 
-	blockContent, err := flac.ReadBytes(int(blockLength))
+	blockContent, err := flac.readBytes(int(blockLength))
 
 	if err != nil {
 		return nil, fmt.Errorf("unable to read metadata block with offset %d: %w", offset, err)
@@ -202,7 +202,7 @@ func (flac *Flac) readMetadataBlock(offset int64) (*MetadataBlock, error) {
 }
 
 // ReadAllMetadataBlocks tries to read all metadata blocks from a source FLAC file
-func (flac *Flac) ReadAllMetadataBlocks() ([]MetadataBlock, error) {
+func (flac *Flac) readAllMetadataBlocks() ([]MetadataBlock, error) {
 	var offset int = 4
 	blocks := []MetadataBlock{}
 
@@ -367,7 +367,7 @@ func (flac *Flac) splitByBlock(block *MetadataBlock) ([]byte, []byte, error) {
 	flac.file.Seek(0, 0)
 	// Get the current block (the one we want to remove) size
 	currentBlockSize := int64(4 + block.BlockHeader.BlockLength)
-	previousData, err := flac.ReadBytes(int(blockIndex) + int(currentBlockSize))
+	previousData, err := flac.readBytes(int(blockIndex) + int(currentBlockSize))
 
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to read bytes: %w", err)
@@ -375,7 +375,7 @@ func (flac *Flac) splitByBlock(block *MetadataBlock) ([]byte, []byte, error) {
 
 	// Move to the end of the current block size we want to remove and read the rest of the file
 	flac.file.Seek(blockIndex+currentBlockSize, 0)
-	postData, err := flac.ReadBytes(int(flac.fileSize) - (int(blockIndex) + int(currentBlockSize)))
+	postData, err := flac.readBytes(int(flac.fileSize) - (int(blockIndex) + int(currentBlockSize)))
 
 	if err != nil {
 		return nil, nil, fmt.Errorf("unable to split file: %w", err)
@@ -511,19 +511,34 @@ func (flac *Flac) RemoveCoverPicture(ignoreIfMissing bool) error {
 	return nil
 }
 
-// Save modified FLAC buffer to a new file or to the current opened one, overwriting it
-func (flac *Flac) Save(outputPath *string) error {
+// getMetadataEndOffset returns the byte offset in the file where metadata ends
+func (flac *Flac) getMetadataEndOffset() (int64, error) {
+	offset := int64(4) // skip 'fLaC' header
+	for {
+		headerBytes := make([]byte, 4)
+		if _, err := flac.file.ReadAt(headerBytes, offset); err != nil {
+			return 0, fmt.Errorf("unable to read metadata header at offset %d: %w", offset, err)
+		}
 
+		isLast := (headerBytes[0] & 0x80) != 0
+		blockLength := int64(binary.BigEndian.Uint32(append([]byte{0}, headerBytes[1:]...)))
+
+		offset += 4 + blockLength
+
+		if isLast {
+			break
+		}
+	}
+
+	return offset, nil
+}
+
+func (flac *Flac) Save(outputPath *string) error {
 	var metadataBuffer []byte
 	var rawAudioBuffer []byte
 
-	// Create local output file
-	var outFile *os.File
-	var err error
-
-	vorbisBlock, _ := flac.getBlock("VORBIS_COMMENT")
-
-	blocks, err := flac.ReadAllMetadataBlocks()
+	// Read all metadata blocks
+	blocks, err := flac.readAllMetadataBlocks()
 	if err != nil {
 		return fmt.Errorf("unable to read all metadata blocks: %w", err)
 	}
@@ -531,108 +546,94 @@ func (flac *Flac) Save(outputPath *string) error {
 	// Rebuilding the FLAC file
 	// First thing first add the FLAC magic header 'fLaC'
 	flac.file.Seek(0, 0)
-
-	magicHeader, err := flac.ReadBytes(4)
+	magicHeader, err := flac.readBytes(4)
 	if err != nil {
 		return fmt.Errorf("failed to read FLAC header: %w", err)
 	}
 
-	// I should get the StreamInfoBlock independently outside the for loop
-	// So it is always before the other blocks (it must be this way)
-	streamInfoBlock, err := flac.getBlock("STREAMINFO")
+	// Prepare new metadata blocks buffer
+	newBlocks := []MetadataBlock{}
 
+	// STREAMINFO block is mandatory
+	streamInfo, err := flac.getBlock("STREAMINFO")
 	if err != nil {
-		return fmt.Errorf("unable to retrieve '%s' block which is mandatory inside a FLAC file", "STREAMINFO")
+		return fmt.Errorf("missing STREAMINFO block: %w", err)
 	}
+	newBlocks = append(newBlocks, *streamInfo)
 
-	streamInfoBlockData := streamInfoBlock.BlockData
-	streamInfoBlockHeader := streamInfoBlock.BlockHeader.Data
-
-	metadataBuffer = AppendTo(metadataBuffer, [][]byte{streamInfoBlockHeader, streamInfoBlockData})
-
-	if len(blocks) < 1 {
-		return fmt.Errorf("not enough blocks in flac file, number of blocks: %d", len(blocks))
-	}
-
+	// VORBIS_COMMENT
 	if len(flac.pendingComments) > 0 {
-		// Create new block with updated values
 		vorbisBlock, err := flac.createVorbisBlock()
-
 		if err != nil {
-			return fmt.Errorf("failed to create missing VORBIS block: %w", err)
+			return fmt.Errorf("failed to create VORBIS_COMMENT: %w", err)
 		}
-
-		metadataBuffer = AppendTo(metadataBuffer, [][]byte{vorbisBlock})
-
+		newBlocks = append(newBlocks, MetadataBlock{
+			BlockHeader: MetadataBlockHeader{Data: vorbisBlock[:4]}, // placeholder header
+			BlockData:   vorbisBlock[4:],
+		})
 	} else if flac.vorbisIndex != nil {
-		// Put what you already parsed as no changes are made
-		vorbisHeader := vorbisBlock.BlockHeader.Data
-		vorbisData := vorbisBlock.BlockData
-
-		metadataBuffer = AppendTo(metadataBuffer, [][]byte{
-			vorbisHeader,
-			vorbisData,
-		})
+		vorbisBlock, _ := flac.getBlock("VORBIS_COMMENT")
+		newBlocks = append(newBlocks, *vorbisBlock)
 	}
 
-	filteredBlocks := GetFilteredBlocks(blocks, []string{
-		"STREAMINFO",
-		"PICTURE",
-		"VORBIS_COMMENT",
-	})
-
+	// Cover picture
 	if len(flac.pendingCoverPicture) > 0 {
-		metadataBuffer = AppendTo(metadataBuffer, [][]byte{
-			flac.pendingCoverPicture,
+		newBlocks = append(newBlocks, MetadataBlock{
+			BlockHeader: MetadataBlockHeader{Data: flac.pendingCoverPicture[:4]},
+			BlockData:   flac.pendingCoverPicture[4:],
 		})
-	} else if flac.parsedCoverPicture != nil {
-		if !flac.removeCoverPicture {
-			pictureBlockHeader := flac.parsedCoverPicture.BlockHeader.Data
-			pictureBlockBody := flac.parsedCoverPicture.BlockData
-
-			metadataBuffer = AppendTo(metadataBuffer, [][]byte{
-				pictureBlockHeader,
-				pictureBlockBody,
-			})
-		}
+	} else if flac.parsedCoverPicture != nil && !flac.removeCoverPicture {
+		newBlocks = append(newBlocks, *flac.parsedCoverPicture)
 	}
 
-	var lastBlock MetadataBlock
-
+	// Other filtered blocks
+	filteredBlocks := GetFilteredBlocks(blocks, []string{
+		"STREAMINFO", "VORBIS_COMMENT", "PICTURE",
+	})
 	for _, b := range filteredBlocks {
-		metadataBuffer = AppendTo(metadataBuffer, [][]byte{
-			b.BlockHeader.Data,
-			b.BlockData,
-		})
+		newBlocks = append(newBlocks, b)
 	}
 
-	// Get always the current last block from the currently loaded file
-	lastBlock = blocks[len(blocks)-1]
+	// Mark the last block correctly
+	for i := range newBlocks {
+		header := newBlocks[i].BlockHeader.Data
+		if i == len(newBlocks)-1 {
+			// Set isLastBlock bit
+			header[0] |= 0x80
+		} else {
+			// Clear isLastBlock bit
+			header[0] &^= 0x80
+		}
+		newBlocks[i].BlockHeader.Data = header
+		metadataBuffer = AppendTo(metadataBuffer, [][]byte{header, newBlocks[i].BlockData})
+	}
 
-	// Get track data
-	_, rawAudioBuffer, err = flac.splitByBlock(&lastBlock)
-
+	// Read raw audio starting after the original metadata
+	metadataEnd, err := flac.getMetadataEndOffset()
 	if err != nil {
-		return fmt.Errorf("unable to get raw audio data with index: '%d'", lastBlock.Index)
+		return fmt.Errorf("cannot get metadata end offset: %w", err)
+	}
+	flac.file.Seek(metadataEnd, 0)
+	rawAudioBuffer, err = io.ReadAll(flac.file)
+	if err != nil {
+		return fmt.Errorf("unable to read raw audio: %w", err)
 	}
 
+	// Create output file
+	outFileName := flac.fileName
 	if outputPath != nil {
-		outFile, err = os.Create(*outputPath)
-	} else {
-		outFile, err = os.Create(flac.fileName)
+		outFileName = *outputPath
 	}
-
+	outFile, err := os.Create(outFileName)
 	if err != nil {
-		return fmt.Errorf("unable to save file with name %s: %w", *outputPath, err)
+		return fmt.Errorf("unable to create file '%s': %w", outFileName, err)
 	}
 	defer outFile.Close()
 
-	var fullBuffer []byte
-	fullBuffer = AppendTo(fullBuffer, [][]byte{magicHeader, metadataBuffer, rawAudioBuffer})
-	_, err = outFile.Write(fullBuffer)
-
-	if err != nil {
-		return fmt.Errorf("unable to write metadata buffer: %w", err)
+	// Write FLAC file: magic header + metadata + raw audio
+	fullBuffer := AppendTo(nil, [][]byte{magicHeader, metadataBuffer, rawAudioBuffer})
+	if _, err := outFile.Write(fullBuffer); err != nil {
+		return fmt.Errorf("unable to write FLAC file: %w", err)
 	}
 
 	return nil
